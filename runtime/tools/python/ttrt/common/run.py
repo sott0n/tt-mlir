@@ -409,6 +409,14 @@ class Run:
             self.ttmetal_binaries.append(bin)
 
         self.logging.debug(f"------finished checking constraints for run API")
+    
+    def get_program_indices(self, bin):
+        program_indices = []
+        if self["--program-index"] == "all":
+            program_indices.extend(range(bin.get_num_programs()))
+        else:
+            program_indices.append(int(self["--program-index"]))
+        return program_indices
 
     def execute(self):
         self.logging.debug(f"------executing run API")
@@ -506,12 +514,7 @@ class Run:
                         )
                         self.logging.debug(f"opened emitc dylib={emitc_dylib_path}")
 
-                    program_indices = []
-                    if self["--program-index"] == "all":
-                        program_indices.extend(range(bin.get_num_programs()))
-                    else:
-                        program_indices.append(int(self["--program-index"]))
-
+                    program_indices = self.get_program_indices(bin)
                     for program_index in program_indices:
                         self.logging.debug(
                             f"evaluating program={program_index} for binary={bin.file_path}"
@@ -946,8 +949,28 @@ class Run:
 
             for bin in self.ttmetal_binaries:
                 self.artifacts.save_binary(bin, self.query)
+        
+        def _get_output_tensors(bin):
+            program_indices = self.get_program_indices(bin)
+            output = {}
+            for pi in program_indices:
+                program = bin.get_program(pi)
+                if not program.output_tensors:
+                    return output
+                
+                output_tensors = {}
+                for ti, tensor in enumerate(program.output_tensors):
+                    output_tensors[f"tensor_{ti}"] = {
+                        "shape": tuple(tensor.shape),
+                        "dtype": str(tensor.dtype),
+                        "data": tensor.tolist(),
+                    }
+
+                output[f"program_{pi}"] = output_tensors
+            return output
 
         for bin in self.ttnn_binaries:
+            output_tensors = _get_output_tensors(bin)
             if bin.test_result == "pass":
                 test_result = {
                     "file_path": bin.file_path,
@@ -956,6 +979,7 @@ class Run:
                     "log_file": self.logger.file_name,
                     "artifacts": self.artifacts.artifacts_folder_path,
                     "program_index": self["--program-index"],
+                    "output_tensors": output_tensors
                 }
                 self.results.add_result(test_result)
                 self.logging.info(f"PASS: test case={bin.file_path}")
@@ -963,6 +987,7 @@ class Run:
                 self.logging.error(f"ERROR: test case={bin.file_path}")
 
         for bin in self.ttmetal_binaries:
+            output_tensors = _get_output_tensors(bin)
             if bin.test_result == "pass":
                 test_result = {
                     "file_path": bin.file_path,
@@ -971,6 +996,7 @@ class Run:
                     "log_file": self.logger.file_name,
                     "artifacts": self.artifacts.artifacts_folder_path,
                     "program_index": self["--program-index"],
+                    "output_tensors": output_tensors
                 }
                 self.results.add_result(test_result)
                 self.logging.info(f"PASS: test case={bin.file_path}")
